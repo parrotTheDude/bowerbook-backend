@@ -1,0 +1,20 @@
+const express = require('express');
+const { PrismaClient } = require('@prisma/client');
+const authMiddleware = require('../middleware/authMiddleware');
+const roleMiddleware = require('../middleware/roleMiddleware');
+
+const prisma = new PrismaClient();
+const router = express.Router();
+
+// Get all users (Admin only)
+router.get('/users', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+  try {
+    const users = await prisma.user.findMany();
+    res.json(users);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+module.exports = router;

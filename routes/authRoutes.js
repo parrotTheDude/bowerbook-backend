@@ -2,34 +2,14 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { body, validationResult } = require('express-validator');
-const crypto = require('crypto');
 const { PrismaClient } = require('@prisma/client');
-const postmark = require('postmark');
 const { authLimiter, verificationLimiter } = require('../middleware/rateLimit');
-const strongPasswordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[\W_]).{8,}$/;
+const { generateVerificationCode, sendEmail, strongPasswordRegex } = require('../utils/utils');
+const authMiddleware = require('../middleware/authMiddleware');
 require('dotenv').config();
 
 const prisma = new PrismaClient();
 const router = express.Router();
-const authMiddleware = require('../middleware/authMiddleware');
-const postmarkClient = new postmark.ServerClient(process.env.POSTMARK_SERVER_TOKEN);
-
-// Utility function: Generate a random 6-character alphanumeric verification code
-const generateVerificationCode = () => crypto.randomBytes(3).toString('hex').toUpperCase();
-
-// Utility function: Send email via Postmark
-const sendEmail = async (to, subject, text) => {
-  try {
-    await postmarkClient.sendEmail({
-      From: process.env.EMAIL_FROM,
-      To: to,
-      Subject: subject,
-      TextBody: text,
-    });
-  } catch (error) {
-    console.error('Error sending email via Postmark:', error.message);
-  }
-};
 
 /** 
  * =============================
@@ -42,7 +22,9 @@ router.post('/register', authLimiter, [
   body('name').notEmpty().withMessage('Name is required'),
   body('last_name').notEmpty().withMessage('Last name is required'),
   body('email').isEmail().withMessage('Invalid email'),
-  body('password').isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+  body('password').matches(strongPasswordRegex).withMessage(
+    'Password must be at least 8 characters, include an uppercase letter, a lowercase letter, a number, and a special character'
+  ),
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
@@ -53,17 +35,19 @@ router.post('/register', authLimiter, [
     const existingUser = await prisma.user.findUnique({ where: { email } });
     if (existingUser) return res.status(400).json({ message: 'User already exists' });
 
-    const hashedPassword = await bcrypt.hash(password, 10);
-    const user = await prisma.user.create({ data: { name, last_name, email, password: hashedPassword } });
+    const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_SALT_ROUNDS));
+    const user = await prisma.user.create({
+      data: { name, last_name, email, password: hashedPassword }
+    });
 
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
     res.status(201).json({ message: 'User registered successfully', token });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
-// Login User
 router.post('/login', authLimiter, [
   body('email').isEmail().withMessage('Invalid email'),
   body('password').notEmpty().withMessage('Password is required'),
@@ -75,15 +59,28 @@ router.post('/login', authLimiter, [
 
   try {
     const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) return res.status(400).json({ message: 'Invalid email or password' });
 
+    // If the user doesn't exist, send a redirect response
+    if (!user) {
+      return res.status(302).json({
+        message: 'User not found. Redirecting to account creation...',
+        redirectUrl: '/register'  // Change this to the actual front-end registration page
+      });
+    }
+
+    // If the user exists, check the password
     const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) return res.status(400).json({ message: 'Invalid email or password' });
+    if (!isMatch) {
+      return res.status(400).json({ message: 'Invalid email or password' });
+    }
 
+    // Generate JWT token
     const token = jwt.sign({ id: user.id }, process.env.JWT_SECRET, { expiresIn: '7d' });
+
     res.json({ message: 'Login successful', token });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -105,39 +102,39 @@ router.get('/me', authMiddleware, async (req, res) => {
 
     res.json(user);
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
+
 
 // Update User
 router.put('/update', authMiddleware, [
   body('name').optional().notEmpty().withMessage('Name cannot be empty'),
-  body('last_name').optional().notEmpty().withMessage('Last name cannot be empty'),
-  body('email').optional().isEmail().withMessage('Invalid email format'),
-  body('password').optional().isLength({ min: 8 }).withMessage('Password must be at least 8 characters'),
+  body('password').optional().matches(strongPasswordRegex).withMessage(
+    'Password must be at least 8 characters, include an uppercase letter, a lowercase letter, a number, and a special character'
+  ),
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-  const { name, last_name, email, password } = req.body;
-
+  const { name, password } = req.body;
   try {
-    const updatedData = {
-      ...(name && { name }),
-      ...(last_name && { last_name }),
-      ...(email && { email }),
-      ...(password && { password: await bcrypt.hash(password, 10) }),
-    };
+    const updatedData = { ...(name && { name }) };
+
+    if (password) {
+      updatedData.password = await bcrypt.hash(password, 10);
+    }
 
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: updatedData,
-      select: { id: true, name: true, last_name: true, email: true, updatedAt: true },
     });
 
     res.json({ message: 'Profile updated successfully', user: updatedUser });
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -153,34 +150,118 @@ router.delete('/delete', authMiddleware, async (req, res) => {
 
 /** 
  * =============================
+ * PASSWORD ROUTES
+ * =============================
+ */
+router.post('/forgot-password', [
+  body('email').isEmail().withMessage('Invalid email format'),
+], async (req, res) => {
+  const { email } = req.body;
+  const token = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + 30 * 60 * 1000); // 30 mins expiry
+
+  try {
+    await prisma.passwordResetToken.deleteMany({ where: { user: { email } } });
+
+    await prisma.passwordResetToken.create({
+      data: {
+        token,
+        expiresAt,
+        user: { connect: { email } },
+      },
+    });
+
+    await sendEmail(email, 'Password Reset', `Use this token to reset your password: ${token}`);
+
+    res.json({ message: 'Password reset token sent' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+router.post('/reset-password', [
+  body('email').isEmail().withMessage('Invalid email format'),
+  body('token').notEmpty().withMessage('Token is required'),
+  body('newPassword').matches(strongPasswordRegex)
+    .withMessage('Password must be at least 8 characters, include an uppercase letter, a lowercase letter, a number, and a special character'),
+], async (req, res) => {
+  const { email, token, newPassword } = req.body;
+
+  try {
+    const resetToken = await prisma.passwordResetToken.findFirst({
+      where: { user: { email }, token },
+    });
+
+    if (!resetToken || resetToken.expiresAt < new Date()) {
+      return res.status(400).json({ message: 'Invalid or expired token' });
+    }
+
+    const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_SALT_ROUNDS));
+    await prisma.user.update({
+      where: { email },
+      data: { password: hashedPassword },
+    });
+
+    await prisma.passwordResetToken.delete({ where: { id: resetToken.id } });
+
+    res.json({ message: 'Password reset successful' });
+
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+/** 
+ * =============================
  * EMAIL VERIFICATION ROUTES
  * =============================
  */
 
-// Request email verification code
 router.post('/request-verification', verificationLimiter, [
   body('email').isEmail().withMessage('Invalid email format'),
 ], async (req, res) => {
   const { email } = req.body;
   const code = generateVerificationCode();
-  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiry
 
   try {
-    await prisma.verificationToken.deleteMany({ where: { user: { email } } });
+    // Find the user first
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (!user) {
+      return res.status(400).json({ message: 'User not found' });
+    }
 
-    await prisma.verificationToken.create({
-      data: {
-        token: code,
-        expiresAt,
-        user: { connectOrCreate: { where: { email }, create: { email } } },
-      },
+    // Check if a verification token already exists for this user
+    const existingToken = await prisma.verificationToken.findFirst({
+      where: { userId: user.id }
     });
 
-    await sendEmail(email, 'Your Verification Code', `Your verification code is: ${code}\nThis code expires in 1 hour.`);
+    if (existingToken) {
+      // Update existing token
+      await prisma.verificationToken.update({
+        where: { id: existingToken.id },
+        data: {
+          token: code,
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        },
+      });
+    } else {
+      // Create new token
+      await prisma.verificationToken.create({
+        data: {
+          token: code,
+          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+          user: { connect: { id: user.id } },
+        },
+      });
+    }
 
-    res.json({ message: 'Verification code sent via email' });
+    // Send email with verification code
+    await sendEmail(email, 'Your Verification Code', `Your code: ${code} (valid for 1 hour)`);
+    res.json({ message: 'Verification code sent' });
+
   } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 
@@ -233,7 +314,7 @@ router.post('/complete-registration', [
     }
 
     // Hash the password
-    const hashedPassword = await bcrypt.hash(password, 10);
+    const hashedPassword = await bcrypt.hash(password, parseInt(process.env.BCRYPT_SALT_ROUNDS));
 
     // Update the user with their name and password
     await prisma.user.update({
@@ -245,6 +326,61 @@ router.post('/complete-registration', [
 
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Resend a verification code
+router.post('/resend-verification', [
+  body('email').isEmail().withMessage('Invalid email format'),
+], async (req, res) => {
+  const { email } = req.body;
+  const code = generateVerificationCode();
+  const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiry
+
+  try {
+    await prisma.verificationToken.deleteMany({ where: { user: { email } } });
+
+    await prisma.verificationToken.create({
+      data: {
+        token: code,
+        expiresAt,
+        user: { connect: { email } }, // Connect existing user
+      },
+    });
+
+    await sendEmail(email, 'Your New Verification Code', `Your new verification code is: ${code}\nIt expires in 1 hour.`);
+
+    res.json({ message: 'New verification code sent' });
+  } catch (error) {
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Role Selection
+router.post('/select-role', authMiddleware, [
+  body('role')
+    .isIn(['business_owner', 'customer'])
+    .withMessage('Invalid role. Must be "business_owner" or "customer".'),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
+
+  const { role } = req.body;
+
+  try {
+    // Update user role in the database
+    const updatedUser = await prisma.user.update({
+      where: { id: req.user.id },
+      data: { role },
+    });
+
+    // Redirect based on role
+    let redirectUrl = role === 'business_owner' ? '/create-business' : '/dashboard';
+
+    res.json({ message: `Role selected: ${role}`, redirectUrl });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
   }
 });
 

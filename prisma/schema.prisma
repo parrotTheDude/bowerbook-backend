@@ -8,15 +8,17 @@ datasource db {
 }
 
 model Tenant {
-  id            String         @id @default(uuid())
-  name          String         @unique
-  owner         User?          @relation(fields: [ownerId], references: [id], name: "TenantOwner")
-  ownerId       String?
-  users         TenantUser[]
-  services      Service[]
-  bookings      Booking[]
+  id          String  @id @default(uuid())
+  name        String  @unique
+  ownerId     String  @unique
+  createdAt   DateTime @default(now())
+
+  // Relations
+  owner       User     @relation(fields: [ownerId], references: [id], name: "TenantOwner")  // ✅ Add relation name to match User
+  users       TenantUser[]
+  services    Service[]
+  bookings    Booking[]
   subscriptions Subscription[]
-  createdAt     DateTime       @default(now())
 }
 
 model User {
@@ -26,13 +28,16 @@ model User {
   email               String               @unique
   email_verified_at   DateTime?
   password            String?
+  role                String   @default("customer")  // "admin", "business_owner", "customer"
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  // Relations
   tenants             TenantUser[]
   bookings            Booking[]
-  ownedTenants        Tenant[]             @relation(name: "TenantOwner")
-  verificationTokens  VerificationToken[]  @relation(name: "UserVerificationToken")
+  ownedTenants        Tenant[] @relation("TenantOwner")  // ✅ Add relation name to match Tenant
+  verificationTokens  VerificationToken[] @relation(name: "UserVerificationToken")
   passwordResetTokens PasswordResetToken[] @relation(name: "UserPasswordResetToken")
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
 }
 
 model TenantUser {
@@ -68,13 +73,15 @@ model Booking {
 }
 
 model Subscription {
-  id        String    @id @default(uuid())
-  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  id        String   @id @default(uuid())
   tenantId  String
   plan      String
-  status    String    @default("active")
-  startedAt DateTime  @default(now())
+  status    String   @default("active")
+  startedAt DateTime @default(now())
   expiresAt DateTime?
+
+  // Relations
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])  // ✅ Add missing relation
 }
 
 model VerificationToken {
