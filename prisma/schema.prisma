@@ -1,0 +1,94 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Tenant {
+  id            String         @id @default(uuid())
+  name          String         @unique
+  owner         User?          @relation(fields: [ownerId], references: [id], name: "TenantOwner")
+  ownerId       String?
+  users         TenantUser[]
+  services      Service[]
+  bookings      Booking[]
+  subscriptions Subscription[]
+  createdAt     DateTime       @default(now())
+}
+
+model User {
+  id                  String               @id @default(uuid())
+  name                String
+  last_name           String
+  email               String               @unique
+  email_verified_at   DateTime?
+  password            String
+  tenants             TenantUser[]
+  bookings            Booking[]
+  ownedTenants        Tenant[]             @relation(name: "TenantOwner")
+  verificationTokens  VerificationToken[]  @relation(name: "UserVerificationToken")
+  passwordResetTokens PasswordResetToken[] @relation(name: "UserPasswordResetToken")
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+}
+
+model TenantUser {
+  id       String @id @default(uuid())
+  tenant   Tenant @relation(fields: [tenantId], references: [id])
+  tenantId String
+  user     User   @relation(fields: [userId], references: [id])
+  userId   String
+  role     String @default("member")
+}
+
+model Service {
+  id          String    @id @default(uuid())
+  tenant      Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId    String
+  name        String
+  description String?
+  price       Float
+  duration    Int
+  bookings    Booking[]
+}
+
+model Booking {
+  id        String   @id @default(uuid())
+  tenant    Tenant   @relation(fields: [tenantId], references: [id])
+  tenantId  String
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  service   Service  @relation(fields: [serviceId], references: [id])
+  serviceId String
+  date      DateTime
+  status    String   @default("pending")
+}
+
+model Subscription {
+  id        String    @id @default(uuid())
+  tenant    Tenant    @relation(fields: [tenantId], references: [id])
+  tenantId  String
+  plan      String
+  status    String    @default("active")
+  startedAt DateTime  @default(now())
+  expiresAt DateTime?
+}
+
+model VerificationToken {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], name: "UserVerificationToken")
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+}
+
+model PasswordResetToken {
+  id        String   @id @default(uuid())
+  user      User     @relation(fields: [userId], references: [id], name: "UserPasswordResetToken")
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+}
