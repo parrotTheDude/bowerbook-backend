@@ -2,7 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const morgan = require('morgan');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 const { Pool } = require('pg');
+
+const authRoutes = require('./routes/authRoutes');
 
 const app = express();
 
@@ -24,6 +28,9 @@ pool.query('SELECT NOW()', (err, res) => {
     console.log('Database connected:', res.rows[0]);
   }
 });
+
+// Routes
+app.use('/api/auth', authRoutes);
 
 // Test API
 app.get('/', (req, res) => {
