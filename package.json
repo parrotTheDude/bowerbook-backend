@@ -4,7 +4,9 @@
   "main": "index.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "send-reminders": "node scripts/sendReminders.js",
+    "generate-recurring": "node scripts/generateRecurringBookings.js"
   },
   "keywords": [],
   "author": "",

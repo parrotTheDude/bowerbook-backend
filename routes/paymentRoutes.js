@@ -3,6 +3,7 @@ const Stripe = require('stripe');
 const { PrismaClient } = require('@prisma/client');
 const authMiddleware = require('../middleware/authMiddleware');
 const { roleMiddleware } = require('../middleware/roleMiddleware');
+const { sendPaymentReceipt } = require('../utils/utils');
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -115,7 +116,7 @@ router.post('/create-stripe-account', authMiddleware, roleMiddleware(['business_
     }
   });
 
-router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
+  router.post('/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
     const sig = req.headers['stripe-signature'];
   
     try {
@@ -126,12 +127,16 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
         const bookingId = session.metadata.bookingId;
   
         // Update booking status to "paid"
-        await prisma.booking.update({
+        const booking = await prisma.booking.update({
           where: { id: bookingId },
           data: { status: 'paid' },
+          include: { user: true, service: true },
         });
   
         console.log(`✅ Booking ${bookingId} marked as paid.`);
+  
+        // Send payment receipt email
+        await sendPaymentReceipt(booking.user.email, booking.service.price, booking.service.name);
       }
   
       res.json({ received: true });

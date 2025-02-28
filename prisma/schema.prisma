@@ -62,15 +62,19 @@ model Service {
 }
 
 model Booking {
-  id        String   @id @default(uuid())
-  tenant    Tenant   @relation(fields: [tenantId], references: [id])
-  tenantId  String
-  user      User     @relation(fields: [userId], references: [id])
-  userId    String
-  service   Service  @relation(fields: [serviceId], references: [id])
-  serviceId String
-  date      DateTime
-  status    String   @default("pending")
+  id         String  @id @default(uuid())
+  tenantId   String
+  userId     String
+  serviceId  String
+  date       DateTime
+  status     String  @default("pending") // "pending", "confirmed", "completed", "canceled"
+  recurrence String? // "weekly", "monthly", or NULL if one-time booking
+  createdAt  DateTime @default(now())
+
+  // Relations
+  tenant     Tenant   @relation(fields: [tenantId], references: [id])
+  user       User     @relation(fields: [userId], references: [id])
+  service    Service  @relation(fields: [serviceId], references: [id])
 }
 
 model Subscription {
