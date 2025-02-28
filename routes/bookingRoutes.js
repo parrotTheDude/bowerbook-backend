@@ -1,8 +1,7 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const authMiddleware = require('../middleware/authMiddleware');
-const roleMiddleware = require('../middleware/roleMiddleware');
-require('dotenv').config();
+const { roleMiddleware, isBusinessOwner } = require('../middleware/roleMiddleware');
 
 const prisma = new PrismaClient();
 const router = express.Router();

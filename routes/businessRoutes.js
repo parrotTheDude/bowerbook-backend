@@ -1,29 +1,20 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const authMiddleware = require('../middleware/authMiddleware');
-require('dotenv').config();
+const { roleMiddleware, isBusinessOwner } = require('../middleware/roleMiddleware');
 
 const prisma = new PrismaClient();
 const router = express.Router();
 
-// Create a Business
-router.post('/', authMiddleware, async (req, res) => {
+// Create a Business (Only Business Owners)
+router.post('/', authMiddleware, roleMiddleware(['business_owner']), async (req, res) => {
   const { name } = req.body;
 
   try {
-    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+    const existingBusiness = await prisma.tenant.findFirst({ where: { ownerId: req.user.id } });
+    if (existingBusiness) return res.status(400).json({ message: 'You already own a business.' });
 
-    if (!user || user.role !== 'business_owner') {
-      return res.status(403).json({ message: 'Only business owners can create a business.' });
-    }
-
-    const existingBusiness = await prisma.tenant.findFirst({ where: { ownerId: user.id } });
-    if (existingBusiness) {
-      return res.status(400).json({ message: 'You already own a business.' });
-    }
-
-    const business = await prisma.tenant.create({ data: { name, ownerId: user.id } });
-
+    const business = await prisma.tenant.create({ data: { name, ownerId: req.user.id } });
     res.json({ message: 'Business created successfully', business });
   } catch (error) {
     console.error(error);
@@ -31,7 +22,7 @@ router.post('/', authMiddleware, async (req, res) => {
   }
 });
 
-// Get Business by ID
+// Get Business (Anyone)
 router.get('/:id', authMiddleware, async (req, res) => {
   try {
     const business = await prisma.tenant.findUnique({
@@ -48,13 +39,13 @@ router.get('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// Update Business
-router.put('/:id', authMiddleware, async (req, res) => {
+// Update Business (Only Business Owners of the Business)
+router.put('/:id', authMiddleware, roleMiddleware(['business_owner']), isBusinessOwner, async (req, res) => {
   const { name } = req.body;
 
   try {
     const business = await prisma.tenant.update({
-      where: { id: req.params.id, ownerId: req.user.id },
+      where: { id: req.params.id },
       data: { name },
     });
 
@@ -65,10 +56,10 @@ router.put('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// Delete Business
-router.delete('/:id', authMiddleware, async (req, res) => {
+// Delete Business (Only Business Owners of the Business)
+router.delete('/:id', authMiddleware, roleMiddleware(['business_owner']), isBusinessOwner, async (req, res) => {
   try {
-    await prisma.tenant.delete({ where: { id: req.params.id, ownerId: req.user.id } });
+    await prisma.tenant.delete({ where: { id: req.params.id } });
 
     res.json({ message: 'Business deleted successfully' });
   } catch (error) {

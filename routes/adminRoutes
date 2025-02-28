@@ -1,7 +1,7 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const authMiddleware = require('../middleware/authMiddleware');
-const roleMiddleware = require('../middleware/roleMiddleware');
+const { roleMiddleware } = require('../middleware/roleMiddleware');
 
 const prisma = new PrismaClient();
 const router = express.Router();
@@ -9,8 +9,59 @@ const router = express.Router();
 // Get all users (Admin only)
 router.get('/users', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
   try {
-    const users = await prisma.user.findMany();
+    const users = await prisma.user.findMany({
+      select: { id: true, name: true, email: true, role: true, createdAt: true }
+    });
     res.json(users);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Promote or Demote a User (Admin only)
+router.put('/users/:id/role', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+  const { role } = req.body;
+
+  // Only allow valid roles
+  if (!['admin', 'business_owner', 'customer'].includes(role)) {
+    return res.status(400).json({ message: 'Invalid role. Allowed roles: admin, business_owner, customer' });
+  }
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: req.params.id },
+      data: { role },
+    });
+
+    res.json({ message: `User role updated to ${role}`, user: updatedUser });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Suspend a User (Admin only)
+router.put('/users/:id/suspend', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+  try {
+    await prisma.user.update({
+      where: { id: req.params.id },
+      data: { role: 'suspended' }, // Assign 'suspended' role
+    });
+
+    res.json({ message: 'User has been suspended' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Delete a User (Admin only)
+router.delete('/users/:id', authMiddleware, roleMiddleware(['admin']), async (req, res) => {
+  try {
+    await prisma.user.delete({ where: { id: req.params.id } });
+
+    res.json({ message: 'User deleted successfully' });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
