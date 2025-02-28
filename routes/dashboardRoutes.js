@@ -68,10 +68,21 @@ router.get('/', authMiddleware, roleMiddleware(['business_owner']), async (req, 
       _sum: { service: { select: { price: true } } }
     });
 
+    // Get booking trends (last 6 months)
+    const bookingTrends = await prisma.booking.groupBy({
+      by: ['date'],
+      where: {
+        tenantId: business.id,
+        date: { gte: new Date(new Date().setMonth(new Date().getMonth() - 6)) }
+      },
+      _count: { _all: true }
+    });
+
     res.json({
       businessName: business.name,
       totalRevenue: totalRevenue._sum.price || 0,
       totalCustomers: totalCustomers.length || 0,
+      bookingTrends,
       totalServices,
       upcomingBookings: bookings.filter(b => b.status === 'pending' || b.status === 'confirmed'),
       completedBookings: bookings.filter(b => b.status === 'completed'),

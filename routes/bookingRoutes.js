@@ -93,19 +93,97 @@ router.put('/:id', authMiddleware, async (req, res) => {
   }
 });
 
-// Cancel Booking (Send Cancellation Email)
+// Cancel a single booking
 router.delete('/:id', authMiddleware, async (req, res) => {
   try {
-    const booking = await prisma.booking.findUnique({ where: { id: req.params.id }, include: { service: true, user: true } });
+    const booking = await prisma.booking.findUnique({
+      where: { id: req.params.id },
+      include: { user: true, service: true }
+    });
 
     if (!booking) return res.status(404).json({ message: 'Booking not found' });
 
+    // Ensure only the owner of the booking or a business owner can cancel
+    const business = await prisma.tenant.findFirst({ where: { id: booking.tenantId, ownerId: req.user.id } });
+
+    if (req.user.id !== booking.userId && !business) {
+      return res.status(403).json({ message: 'You do not have permission to cancel this booking.' });
+    }
+
     await prisma.booking.delete({ where: { id: req.params.id } });
 
-    // Send cancellation email
-    await sendCancellationEmail(booking.user.email, booking.service.name, booking.date);
-
     res.json({ message: 'Booking canceled successfully' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Cancel all future recurring bookings
+router.delete('/recurring/:id', authMiddleware, async (req, res) => {
+  try {
+    const booking = await prisma.booking.findUnique({
+      where: { id: req.params.id },
+      include: { user: true, service: true }
+    });
+
+    if (!booking || !booking.recurrence) {
+      return res.status(400).json({ message: 'This is not a recurring booking.' });
+    }
+
+    // Ensure only the booking owner or business owner can cancel
+    const business = await prisma.tenant.findFirst({ where: { id: booking.tenantId, ownerId: req.user.id } });
+
+    if (req.user.id !== booking.userId && !business) {
+      return res.status(403).json({ message: 'You do not have permission to cancel this booking.' });
+    }
+
+    await prisma.booking.deleteMany({
+      where: {
+        userId: booking.userId,
+        serviceId: booking.serviceId,
+        date: { gte: new Date(booking.date) }
+      }
+    });
+
+    res.json({ message: 'All future recurring bookings have been canceled.' });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Get Upcoming & Past Bookings for a Customer
+router.get('/user', authMiddleware, async (req, res) => {
+  try {
+    const upcomingBookings = await prisma.booking.findMany({
+      where: { userId: req.user.id, date: { gte: new Date() } },
+      include: { service: true }
+    });
+
+    const pastBookings = await prisma.booking.findMany({
+      where: { userId: req.user.id, date: { lt: new Date() } },
+      include: { service: true }
+    });
+
+    res.json({ upcomingBookings, pastBookings });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'Server error' });
+  }
+});
+
+// Reschedule Booking
+router.put('/reschedule/:id', authMiddleware, async (req, res) => {
+  const { newDate } = req.body;
+
+  try {
+    const booking = await prisma.booking.update({
+      where: { id: req.params.id, userId: req.user.id },
+      data: { date: new Date(newDate) },
+    });
+
+    res.json({ message: 'Booking rescheduled successfully', booking });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'Server error' });
