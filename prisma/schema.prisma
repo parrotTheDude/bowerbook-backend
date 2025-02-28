@@ -10,6 +10,7 @@ datasource db {
 model Tenant {
   id          String  @id @default(uuid())
   name        String  @unique
+  type        String
   ownerId     String  @unique
   stripeAccountId String?
   createdAt   DateTime @default(now())

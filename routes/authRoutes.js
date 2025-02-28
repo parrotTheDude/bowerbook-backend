@@ -217,51 +217,41 @@ router.post('/reset-password', [
  * =============================
  */
 
-router.post('/request-verification', verificationLimiter, [
+router.post('/request-verification', [
   body('email').isEmail().withMessage('Invalid email format'),
 ], async (req, res) => {
   const { email } = req.body;
-  const code = generateVerificationCode();
 
   try {
-    // Find the user first
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (!user) {
-      return res.status(400).json({ message: 'User not found' });
+    // Check if the email is already registered
+    const existingUser = await prisma.user.findUnique({ where: { email } });
+
+    if (existingUser) {
+      return res.status(200).json({ redirectToLogin: true });
     }
 
-    // Check if a verification token already exists for this user
-    const existingToken = await prisma.verificationToken.findFirst({
-      where: { userId: user.id }
+    // Generate a verification code
+    const code = generateVerificationCode();
+    const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiry
+
+    await prisma.verificationToken.deleteMany({ where: { user: { email } } });
+
+    await prisma.verificationToken.create({
+      data: {
+        token: code,
+        expiresAt,
+        user: { connectOrCreate: { where: { email }, create: { email } } },
+      },
     });
 
-    if (existingToken) {
-      // Update existing token
-      await prisma.verificationToken.update({
-        where: { id: existingToken.id },
-        data: {
-          token: code,
-          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-        },
-      });
-    } else {
-      // Create new token
-      await prisma.verificationToken.create({
-        data: {
-          token: code,
-          expiresAt: new Date(Date.now() + 60 * 60 * 1000),
-          user: { connect: { id: user.id } },
-        },
-      });
-    }
+    // Send the verification email
+    await sendEmail(email, "Your Verification Code", `Your verification code is: ${code}`);
 
-    // Send email with verification code
-    await sendEmail(email, 'Your Verification Code', `Your code: ${code} (valid for 1 hour)`);
-    res.json({ message: 'Verification code sent' });
+    res.json({ message: "Verification code sent" });
 
   } catch (error) {
     console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    res.status(500).json({ message: "Server error" });
   }
 });
 
@@ -329,7 +319,6 @@ router.post('/complete-registration', [
   }
 });
 
-// Resend a verification code
 router.post('/resend-verification', [
   body('email').isEmail().withMessage('Invalid email format'),
 ], async (req, res) => {
@@ -338,49 +327,62 @@ router.post('/resend-verification', [
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour expiry
 
   try {
-    await prisma.verificationToken.deleteMany({ where: { user: { email } } });
+    // Check if the user is already registered
+    const existingUser = await prisma.user.findUnique({ where: { email } });
 
+    if (existingUser && existingUser.password) {
+      return res.status(400).json({ message: 'This email is already registered. Please log in.' });
+    }
+
+    // Delete any existing verification token for this email
+    await prisma.verificationToken.deleteMany({
+      where: { user: { email } }
+    });
+
+    // Create a new verification token
     await prisma.verificationToken.create({
       data: {
         token: code,
         expiresAt,
-        user: { connect: { email } }, // Connect existing user
+        user: {
+          connectOrCreate: {
+            where: { email },
+            create: { email }
+          }
+        },
       },
     });
 
+    // Send new verification email
     await sendEmail(email, 'Your New Verification Code', `Your new verification code is: ${code}\nIt expires in 1 hour.`);
 
     res.json({ message: 'New verification code sent' });
+
   } catch (error) {
+    console.error(error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-// Role Selection
-router.post('/select-role', authMiddleware, [
-  body('role')
-    .isIn(['business_owner', 'customer'])
-    .withMessage('Invalid role. Must be "business_owner" or "customer".'),
-], async (req, res) => {
-  const errors = validationResult(req);
-  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
-
+router.post('/select-role', authMiddleware, async (req, res) => {
   const { role } = req.body;
 
+  if (!["business_owner", "customer"].includes(role)) {
+    return res.status(400).json({ message: "Invalid role selection." });
+  }
+
   try {
-    // Update user role in the database
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: { role },
     });
 
-    // Redirect based on role
-    let redirectUrl = role === 'business_owner' ? '/create-business' : '/dashboard';
+    let redirectUrl = role === "business_owner" ? "/create-business" : "/dashboard";
 
     res.json({ message: `Role selected: ${role}`, redirectUrl });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("Error updating role:", error);
+    res.status(500).json({ message: "Server error" });
   }
 });
 

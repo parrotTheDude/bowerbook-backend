@@ -8,13 +8,23 @@ const router = express.Router();
 
 // Create a Business (Only Business Owners)
 router.post('/', authMiddleware, roleMiddleware(['business_owner']), async (req, res) => {
-  const { name } = req.body;
+  const { name, type } = req.body;
 
   try {
     const existingBusiness = await prisma.tenant.findFirst({ where: { ownerId: req.user.id } });
-    if (existingBusiness) return res.status(400).json({ message: 'You already own a business.' });
 
-    const business = await prisma.tenant.create({ data: { name, ownerId: req.user.id } });
+    if (existingBusiness) {
+      return res.status(400).json({ message: 'You already own a business.' });
+    }
+
+    const business = await prisma.tenant.create({
+      data: {
+        name,
+        type,
+        ownerId: req.user.id,
+      },
+    });
+
     res.json({ message: 'Business created successfully', business });
   } catch (error) {
     console.error(error);

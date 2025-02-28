@@ -1,99 +1,87 @@
 const express = require('express');
 const { PrismaClient } = require('@prisma/client');
 const authMiddleware = require('../middleware/authMiddleware');
-const { roleMiddleware } = require('../middleware/roleMiddleware');
 
 const prisma = new PrismaClient();
 const router = express.Router();
 
-// Get Business Owner Dashboard
-router.get('/', authMiddleware, roleMiddleware(['business_owner']), async (req, res) => {
+router.get('/', authMiddleware, async (req, res) => {
   try {
-    // Find the business owned by the logged-in user
-    const business = await prisma.tenant.findFirst({
-      where: { ownerId: req.user.id },
-      include: { services: true, bookings: true }
-    });
+    console.log("🔍 Fetching dashboard data for user:", req.user.id);
 
-    if (!business) {
-      return res.status(404).json({ message: 'No business found for this user.' });
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+
+    if (!user) {
+      console.error("❌ User not found:", req.user.id);
+      return res.status(404).json({ message: "User not found" });
     }
 
-    // Get all confirmed and pending bookings
-    const bookings = await prisma.booking.findMany({
-      where: { tenantId: business.id, status: { in: ['pending', 'confirmed', 'completed'] } },
-      include: { service: true, user: true }
-    });
+    let response = { user };
 
-    // Count total unique customers
-    const totalCustomers = await prisma.booking.groupBy({
-      by: ['userId'],
-      where: { tenantId: business.id }
-    });
+    if (user.role === "business_owner") {
+      console.log("📊 Fetching business data...");
+      const business = await prisma.tenant.findFirst({
+        where: { ownerId: user.id },
+        include: { services: true, bookings: true },
+      });
 
-    // Count total revenue from completed bookings
-    const totalRevenue = await prisma.booking.aggregate({
-      where: { tenantId: business.id, status: 'completed' },
-      _sum: { service: { select: { price: true } } }
-    });
+      if (!business) {
+        console.error("❌ No business found for owner:", user.id);
+        return res.status(404).json({ message: "No business found for this user." });
+      }
 
-    // Get total services offered
-    const totalServices = await prisma.service.count({
-      where: { tenantId: business.id }
-    });
+      console.log("📅 Fetching bookings...");
+      const bookings = await prisma.booking.findMany({
+        where: { tenantId: business.id },
+        include: { service: true, user: true },
+      });
 
-    // Get most popular services (sorted by number of bookings)
-    const popularServices = await prisma.service.findMany({
-      where: { tenantId: business.id },
-      include: { bookings: true },
-      orderBy: { bookings: { _count: 'desc' } },
-      take: 5 // Limit to top 5
-    });
+      console.log("💰 Calculating revenue...");
+      const totalRevenue = await prisma.booking.aggregate({
+        where: { tenantId: business.id, status: "completed" },
+        _sum: { service: { select: { price: true } } },
+      });
 
-    // Get booking status summary
-    const bookingSummary = await prisma.booking.groupBy({
-      by: ['status'],
-      where: { tenantId: business.id },
-      _count: { _all: true }
-    });
+      console.log("👥 Counting customers...");
+      const totalCustomers = await prisma.booking.groupBy({
+        by: ["userId"],
+        where: { tenantId: business.id },
+      });
 
-    // Monthly Revenue Breakdown (Last 6 Months)
-    const monthlyRevenue = await prisma.booking.groupBy({
-      by: ['date'],
-      where: {
-        tenantId: business.id,
-        status: 'completed',
-        date: { gte: new Date(new Date().setMonth(new Date().getMonth() - 6)) }
-      },
-      _sum: { service: { select: { price: true } } }
-    });
+      console.log("📈 Fetching monthly revenue breakdown...");
+      const monthlyRevenue = await prisma.booking.groupBy({
+        by: ["date"],
+        where: {
+          tenantId: business.id,
+          status: "completed",
+          date: { gte: new Date(new Date().setMonth(new Date().getMonth() - 6)) },
+        },
+        _sum: { service: { select: { price: true } } },
+      });
 
-    // Get booking trends (last 6 months)
-    const bookingTrends = await prisma.booking.groupBy({
-      by: ['date'],
-      where: {
-        tenantId: business.id,
-        date: { gte: new Date(new Date().setMonth(new Date().getMonth() - 6)) }
-      },
-      _count: { _all: true }
-    });
+      response.business = {
+        name: business.name,
+        totalRevenue: totalRevenue._sum.price || 0,
+        totalCustomers: totalCustomers.length || 0,
+        monthlyRevenue,
+      };
 
-    res.json({
-      businessName: business.name,
-      totalRevenue: totalRevenue._sum.price || 0,
-      totalCustomers: totalCustomers.length || 0,
-      bookingTrends,
-      totalServices,
-      upcomingBookings: bookings.filter(b => b.status === 'pending' || b.status === 'confirmed'),
-      completedBookings: bookings.filter(b => b.status === 'completed'),
-      bookingSummary,
-      mostPopularServices: popularServices,
-      monthlyRevenue
-    });
+      console.log("✅ Successfully fetched business dashboard data.");
+    } else if (user.role === "customer") {
+      console.log("📅 Fetching customer bookings...");
+      const bookings = await prisma.booking.findMany({
+        where: { userId: user.id },
+        include: { service: true, tenant: true },
+      });
 
+      console.log("✅ Successfully fetched customer dashboard data.");
+      response.bookings = bookings;
+    }
+
+    res.json(response);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("❌ Server Error:", error);
+    res.status(500).json({ message: "Server error", error: error.message });
   }
 });
 
