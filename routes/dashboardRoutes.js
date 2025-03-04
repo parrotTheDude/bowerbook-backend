@@ -36,36 +36,6 @@ router.get('/', authMiddleware, async (req, res) => {
         include: { service: true, user: true },
       });
 
-      console.log("💰 Calculating revenue...");
-      const totalRevenue = await prisma.booking.aggregate({
-        where: { tenantId: business.id, status: "completed" },
-        _sum: { service: { select: { price: true } } },
-      });
-
-      console.log("👥 Counting customers...");
-      const totalCustomers = await prisma.booking.groupBy({
-        by: ["userId"],
-        where: { tenantId: business.id },
-      });
-
-      console.log("📈 Fetching monthly revenue breakdown...");
-      const monthlyRevenue = await prisma.booking.groupBy({
-        by: ["date"],
-        where: {
-          tenantId: business.id,
-          status: "completed",
-          date: { gte: new Date(new Date().setMonth(new Date().getMonth() - 6)) },
-        },
-        _sum: { service: { select: { price: true } } },
-      });
-
-      response.business = {
-        name: business.name,
-        totalRevenue: totalRevenue._sum.price || 0,
-        totalCustomers: totalCustomers.length || 0,
-        monthlyRevenue,
-      };
-
       console.log("✅ Successfully fetched business dashboard data.");
     } else if (user.role === "customer") {
       console.log("📅 Fetching customer bookings...");

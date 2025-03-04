@@ -7,16 +7,35 @@ const prisma = new PrismaClient();
 const router = express.Router();
 
 // Create a Business (Only Business Owners)
-router.post('/', authMiddleware, roleMiddleware(['business_owner']), async (req, res) => {
-  const { name, type } = req.body;
+router.post('/', authMiddleware, async (req, res) => {
+  console.log("🛠️ Creating business for user:", req.user.id);
 
   try {
+    // Fetch the latest user data from the database
+    const user = await prisma.user.findUnique({ where: { id: req.user.id } });
+
+    if (!user) {
+      console.error("❌ User not found in database:", req.user.id);
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    console.log("🔍 User role:", user.role); // Log role to debug
+
+    if (user.role !== "business_owner") {
+      console.error("❌ Access denied: User is not a business owner.");
+      return res.status(403).json({ message: "Access denied. Insufficient permissions." });
+    }
+
+    const { name, type } = req.body;
+
+    // Ensure the user does not already have a business
     const existingBusiness = await prisma.tenant.findFirst({ where: { ownerId: req.user.id } });
 
     if (existingBusiness) {
-      return res.status(400).json({ message: 'You already own a business.' });
+      return res.status(400).json({ message: "You already own a business." });
     }
 
+    // Create the business
     const business = await prisma.tenant.create({
       data: {
         name,
@@ -25,10 +44,11 @@ router.post('/', authMiddleware, roleMiddleware(['business_owner']), async (req,
       },
     });
 
-    res.json({ message: 'Business created successfully', business });
+    console.log("✅ Business created successfully:", business);
+    res.json({ message: "Business created successfully", business });
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("❌ Server Error:", error);
+    res.status(500).json({ message: "Server error" });
   }
 });
 

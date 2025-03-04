@@ -70,6 +70,7 @@ model Booking {
   date       DateTime
   status     String  @default("pending") // "pending", "confirmed", "completed", "canceled"
   recurrence String? // "weekly", "monthly", or NULL if one-time booking
+  price     Float   
   createdAt  DateTime @default(now())
 
   // Relations
