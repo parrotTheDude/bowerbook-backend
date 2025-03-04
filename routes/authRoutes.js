@@ -62,10 +62,8 @@ router.post('/login', authLimiter, [
 
     // If the user doesn't exist, send a redirect response
     if (!user) {
-      return res.status(302).json({
-        message: 'User not found. Redirecting to account creation...',
-        redirectUrl: '/register'  // Change this to the actual front-end registration page
-      });
+      console.error("❌ User not found:", email);
+      return res.status(404).json({ message: "User not found" }); // ✅ Ensure 404 is sent
     }
 
     // If the user exists, check the password
@@ -95,15 +93,17 @@ router.get('/me', authMiddleware, async (req, res) => {
   try {
     const user = await prisma.user.findUnique({
       where: { id: req.user.id },
-      select: { id: true, name: true, last_name: true, email: true, createdAt: true }
+      select: { id: true, email: true, name: true, role: true },
     });
 
-    if (!user) return res.status(404).json({ message: 'User not found' });
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
 
     res.json(user);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'Server error' });
+    console.error("❌ Error fetching user:", error);
+    res.status(500).json({ message: "Server error" });
   }
 });
 
@@ -372,16 +372,30 @@ router.post('/select-role', authMiddleware, async (req, res) => {
   }
 
   try {
+    console.log("🔍 Checking user before updating role. User ID:", req.user.id);
+
+    // Fetch the user to confirm they exist
+    const existingUser = await prisma.user.findUnique({ where: { id: req.user.id } });
+
+    if (!existingUser) {
+      console.error("❌ User not found. Cannot update role.");
+      return res.status(404).json({ message: "User not found." });
+    }
+
+    console.log("✅ User exists. Updating role...");
+
     const updatedUser = await prisma.user.update({
       where: { id: req.user.id },
       data: { role },
     });
 
-    let redirectUrl = role === "business_owner" ? "/create-business" : "/dashboard";
+    console.log("✅ Role updated successfully:", updatedUser.role);
 
+    let redirectUrl = role === "business_owner" ? "/create-business" : "/dashboard";
     res.json({ message: `Role selected: ${role}`, redirectUrl });
+
   } catch (error) {
-    console.error("Error updating role:", error);
+    console.error("❌ Error updating role:", error);
     res.status(500).json({ message: "Server error" });
   }
 });
